@@ -297,6 +297,7 @@ class JiraSearch(unittest.TestCase):
             self.assertTrue(client.wait_until_searchable(["VT-1", "VT-2"]))
 
         self.assertEqual((request.call_count, sleep.call_count), (3, 2))
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1.0, 2.0])
 
     def test_the_wait_gives_up_after_the_limit_and_does_not_fail(self):
         client = JiraClient("https://jira.example.com", "e", "t", "VT")

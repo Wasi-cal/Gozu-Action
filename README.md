@@ -27,7 +27,7 @@ jobs:
           jira-project-key: GR
 ```
 
-To fix the tickets with [veil](https://github.com/Wasi-cal/veil), add a second job with `needs: scan` that runs `Wasi-cal/veil@v1`. The action waits until Jira search shows the new tickets, so the second job finds them. When you merge a Fix PR, the next run of this scan closes the tickets whose finding is gone.
+To fix the tickets with [veil](https://github.com/Wasi-cal/veil), add a second job with `needs: scan` that runs `Wasi-cal/veil@v1`. The action waits until Jira search shows the new tickets, so the second job finds them. If the search is slower than 60 seconds, the job goes on, and the next run fixes those tickets. When you merge a Fix PR, the next run of this scan closes the tickets whose finding is gone.
 
 ## Which branches are scanned
 
