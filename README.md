@@ -75,6 +75,8 @@ Outputs: `findings`, `tickets-created`, `tickets-existing`, `tickets-reopened`, 
 - With `anthropic-api-key`, CRITICAL and HIGH tickets get an explanation that replaces the raw message.
 - A finding that may hold a secret (every Trivy secret, and Semgrep rules with "secret" or "hardcoded" in the name) never has its code attached to Jira or sent to the LLM.
 
+**Speed.** The action caches the Semgrep venv (by tool versions, operating system and Python version) and the Trivy vulnerability database (for one day). A run after the first one installs nothing and downloads only a database that is out of date.
+
 **The job.** It runs on Linux and macOS runners (it needs `bash` and `python3`). It fails only when something is broken (a scanner cannot run, Jira refuses a request). Findings never fail it. A step summary lists what was created. Pull requests from forks are not supported: GitHub gives them no secrets.
 
 ## Develop

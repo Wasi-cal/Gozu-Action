@@ -105,20 +105,59 @@ runs:
         version: ${{ inputs.trivy-version }}
         cache: true
 
+    # Cache the vulnerability database of Trivy for one day. Trivy updates a stale database by itself.
+    - id: trivy-day
+      if: steps.gate.outputs.skip != 'true' && contains(inputs.scanners, 'trivy')
+      shell: bash
+      run: |
+        echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+        echo "TRIVY_CACHE_DIR=$RUNNER_TEMP/trivy-cache" >> "$GITHUB_ENV"
+    - if: steps.gate.outputs.skip != 'true' && contains(inputs.scanners, 'trivy')
+      uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      with:
+        path: ${{ runner.temp }}/trivy-cache
+        key: gozu-trivy-db-${{ runner.os }}-${{ steps.trivy-day.outputs.day }}
+        restore-keys: gozu-trivy-db-${{ runner.os }}-
+
     # One venv holds every Python tool, so nothing touches the system Python and the runner needs no pipx.
-    - if: steps.gate.outputs.skip != 'true' && (contains(inputs.scanners, 'semgrep') || inputs.attach-code-snippet == 'true')
+    # The venv is cached. The key holds the packages, the operating system, the architecture and the Python version.
+    - id: tools
+      if: steps.gate.outputs.skip != 'true' && (contains(inputs.scanners, 'semgrep') || inputs.attach-code-snippet == 'true')
       shell: bash
       env:
         SCANNERS: ${{ inputs.scanners }}
         ATTACH: ${{ inputs.attach-code-snippet }}
         SEMGREP_VERSION: ${{ inputs.semgrep-version }}
       run: |
-        packages=()
-        [[ "$SCANNERS" == *semgrep* ]] && packages+=("semgrep==${SEMGREP_VERSION}")
-        [[ "$ATTACH" == "true" ]] && packages+=("pillow==12.3.0" "pygments==2.21.0")
+        if [[ ! "$SEMGREP_VERSION" =~ ^[0-9A-Za-z.+!-]+$ ]]; then
+          echo "::error::The input semgrep-version is not a version."
+          exit 1
+        fi
+        requirements="$RUNNER_TEMP/gozu-requirements.txt"
+        : > "$requirements"
+        [[ "$SCANNERS" == *semgrep* ]] && echo "semgrep==${SEMGREP_VERSION}" >> "$requirements"
+        [[ "$ATTACH" == "true" ]] && printf '%s\n' "pillow==12.3.0" "pygments==2.21.0" >> "$requirements"
+        key="$(python3 - "$requirements" "$RUNNER_OS" "$RUNNER_ARCH" <<'PY'
+        import hashlib, pathlib, platform, sys
+        text = pathlib.Path(sys.argv[1]).read_text()
+        print(hashlib.sha256("|".join([text, sys.argv[2], sys.argv[3], platform.python_version()]).encode()).hexdigest()[:32])
+        PY
+        )"
+        echo "key=$key" >> "$GITHUB_OUTPUT"
+    - id: venv
+      if: steps.tools.outcome == 'success'
+      uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      with:
+        path: ${{ runner.temp }}/gozu-venv
+        key: gozu-venv-${{ steps.tools.outputs.key }}
+    - if: steps.tools.outcome == 'success' && steps.venv.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
         python3 -m venv "$RUNNER_TEMP/gozu-venv"
-        "$RUNNER_TEMP/gozu-venv/bin/pip" install --quiet --disable-pip-version-check "${packages[@]}"
-        echo "$RUNNER_TEMP/gozu-venv/bin" >> "$GITHUB_PATH"
+        "$RUNNER_TEMP/gozu-venv/bin/pip" install --quiet --disable-pip-version-check -r "$RUNNER_TEMP/gozu-requirements.txt"
+    - if: steps.tools.outcome == 'success'
+      shell: bash
+      run: echo "$RUNNER_TEMP/gozu-venv/bin" >> "$GITHUB_PATH"
 
     - id: scan
       if: steps.gate.outputs.skip != 'true'
