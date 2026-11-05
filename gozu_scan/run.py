@@ -24,11 +24,23 @@ def split_list(value: str) -> list[str]:
     return [item.strip() for item in value.replace(",", "\n").splitlines() if item.strip()]
 
 
-def skip_reason(head_ref: str, default_branch: str, skip_patterns: list[str]) -> str | None:
-    """Why this branch is not scanned, or None when it is. The default branch is always skipped."""
+# The Fix branches of veil. A scan of one would only find the work of veil again. They are always skipped.
+VEIL_BRANCH_PATTERNS = ("veil/*", "gozu/fix-*")
+
+
+def skip_reason(
+    head_ref: str, default_branch: str, skip_patterns: list[str], head_repo: str = "", repo: str = ""
+) -> str | None:
+    """Why this branch is not scanned, or None when it is.
+
+    The default branch, the Fix branches of veil and a pull request from a fork are always skipped.
+    GitHub gives a fork no secrets, so a scan of a fork cannot reach Jira.
+    """
+    if head_repo and repo and head_repo != repo:
+        return f"the pull request comes from the fork {head_repo}, and GitHub gives a fork no secrets"
     if default_branch and head_ref == default_branch:
         return f"{head_ref} is the default branch of the repository"
-    for pattern in skip_patterns:
+    for pattern in (*VEIL_BRANCH_PATTERNS, *skip_patterns):
         if fnmatch.fnmatchcase(head_ref, pattern):
             return f"{head_ref} matches the skip pattern {pattern}"
     return None
@@ -194,7 +206,13 @@ def gate() -> int:
     """Runs first, before any scanner is installed, so a skipped branch costs almost nothing."""
     env = os.environ
     head_ref = env.get("GOZU_HEAD_REF", "").strip()
-    reason = skip_reason(head_ref, env.get("GOZU_DEFAULT_BRANCH", "").strip(), split_list(env.get("GOZU_SKIP_BRANCHES", "")))
+    reason = skip_reason(
+        head_ref,
+        env.get("GOZU_DEFAULT_BRANCH", "").strip(),
+        split_list(env.get("GOZU_SKIP_BRANCHES", "")),
+        env.get("GOZU_HEAD_REPO", "").strip(),
+        env.get("GITHUB_REPOSITORY", "").strip(),
+    )
     if reason:
         log.notice(f"Gozu scan skipped: {reason}.")
         _write("GITHUB_STEP_SUMMARY", f"## Gozu scan\nSkipped: {reason}.\n")
@@ -235,6 +253,9 @@ def main() -> int:
             finding.branch = head_ref
             finding.commit_sha = env.get("GOZU_HEAD_SHA", "")
         out = sync(jira, found, head_ref, opts)
+        # Jira search can lag a few seconds behind a new ticket. A tool that reads the tickets next, such as veil, must find them.
+        if out.created:
+            jira.wait_until_searchable([key for key, _ in out.created])
     except KeyError as e:
         log.error(f"The input for {e.args[0]} is empty.")
         return 1

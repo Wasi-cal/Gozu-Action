@@ -25,24 +25,25 @@ jobs:
           jira-email: ${{ secrets.JIRA_EMAIL }}
           jira-api-token: ${{ secrets.JIRA_API_TOKEN }}
           jira-project-key: GR
-          skip-branches: |
-            veil/*
-            develop
 ```
+
+To fix the tickets with [veil](https://github.com/Wasi-cal/veil), add a second job with `needs: scan` that runs `Wasi-cal/veil@v1`. The action waits until Jira search shows the new tickets, so the second job finds them. When you merge a Fix PR, the next run of this scan closes the tickets whose finding is gone.
 
 ## Which branches are scanned
 
-The action skips a run, before it installs anything, when the pull request's head branch is:
+The action skips a run, before it installs anything, when:
 
-- the default branch of the repository, whatever its name, or
-- a match for any pattern in `skip-branches` (default `veil/*`, so veil's fix branches are never scanned).
+- the head branch is the default branch of the repository,
+- the head branch is a Fix branch of veil (`veil/*` or `gozu/fix-*`),
+- the pull request comes from a fork (GitHub gives a fork no secrets), or
+- the head branch matches a pattern in `skip-branches`.
 
 ## Inputs
 
 | Input | Default | |
 |---|---|---|
 | `jira-url`, `jira-email`, `jira-api-token`, `jira-project-key` | required | Jira Cloud connection. Pass the token from a secret. |
-| `skip-branches` | `veil/*` | Glob patterns, one per line or comma separated. |
+| `skip-branches` | empty | Extra glob patterns to skip, one per line or comma separated. |
 | `scanners` | `trivy,semgrep` | Which scanners run. |
 | `working-directory` | `.` | Directory to scan, relative to the checkout. |
 | `trivy-skip-dirs` | `.git,node_modules` | Directories Trivy does not read. |

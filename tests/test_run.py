@@ -81,6 +81,21 @@ class SkipRules(unittest.TestCase):
     def test_a_sister_branch_is_scanned(self):
         self.assertIsNone(run.skip_reason("feature/login", "main", ["veil/*"]))
 
+    def test_the_fix_branches_of_veil_are_skipped_with_no_pattern_at_all(self):
+        for branch in ("veil/fix-vt-1", "gozu/fix-vt-1"):
+            self.assertIsNotNone(run.skip_reason(branch, "main", []), branch)
+
+    def test_a_pull_request_from_a_fork_is_skipped(self):
+        reason = run.skip_reason("feature/login", "main", [], head_repo="eve/app", repo="acme/app")
+
+        self.assertIn("fork", reason)
+
+    def test_a_pull_request_from_the_same_repository_is_scanned(self):
+        self.assertIsNone(run.skip_reason("feature/login", "main", [], head_repo="acme/app", repo="acme/app"))
+
+    def test_an_event_with_no_pull_request_is_scanned(self):
+        self.assertIsNone(run.skip_reason("feature/login", "main", [], head_repo="", repo="acme/app"))
+
     def test_patterns_split_on_newlines_and_commas(self):
         self.assertEqual(run.split_list("veil/*\n develop ,release/*"), ["veil/*", "develop", "release/*"])
 
@@ -211,6 +226,28 @@ class Main(Environment):
             with patch.object(run, "collect", side_effect=AssertionError("No scan may run.")):
                 self.assertEqual(run.gate(), 0)
 
+    def test_a_fork_pull_request_is_skipped_by_the_gate(self):
+        with patch.dict(os.environ, {"GOZU_HEAD_REPO": "eve/app"}):
+            with patch.object(run, "_write") as write:
+                self.assertEqual(run.gate(), 0)
+
+        write.assert_any_call("GITHUB_OUTPUT", "skip=true\n")
+
+    def test_the_run_waits_until_the_new_tickets_can_be_found_by_search(self):
+        outcome = run.Outcome(created=[("VT-1", finding("a")), ("VT-2", finding("b"))])
+        with patch.object(run, "collect", return_value=[]), patch.object(run, "sync", return_value=outcome):
+            with patch.object(JiraClient, "wait_until_searchable") as wait:
+                self.assertEqual(run.main(), 0)
+
+        wait.assert_called_once_with(["VT-1", "VT-2"])
+
+    def test_the_run_does_not_wait_when_it_made_no_ticket(self):
+        with patch.object(run, "collect", return_value=[]), patch.object(run, "sync", return_value=run.Outcome()):
+            with patch.object(JiraClient, "wait_until_searchable") as wait:
+                run.main()
+
+        wait.assert_not_called()
+
     def test_a_jira_failure_fails_the_job(self):
         with patch.object(run, "collect", return_value=[]), patch.object(run, "sync", side_effect=JiraError("down")):
             self.assertEqual(run.main(), 1)
@@ -248,6 +285,25 @@ class JiraSearch(unittest.TestCase):
         self.assertEqual(request.call_count, 2)
         self.assertEqual(request.call_args.args[2]["nextPageToken"], "n")
         self.assertEqual((found[label].key, found[label].done), ("VT-3", True))
+
+    def test_the_wait_ends_when_search_shows_every_new_ticket(self):
+        client = JiraClient("https://jira.example.com", "e", "t", "VT")
+
+        def raw(key):
+            return {"key": key, "fields": {"labels": [], "status": {"statusCategory": {"key": "new"}}}}
+
+        replies = [{"issues": []}, {"issues": [raw("VT-1")]}, {"issues": [raw("VT-1"), raw("VT-2")]}]
+        with patch.object(client, "_request", side_effect=replies) as request, patch("time.sleep") as sleep:
+            self.assertTrue(client.wait_until_searchable(["VT-1", "VT-2"]))
+
+        self.assertEqual((request.call_count, sleep.call_count), (3, 2))
+
+    def test_the_wait_gives_up_after_the_limit_and_does_not_fail(self):
+        client = JiraClient("https://jira.example.com", "e", "t", "VT")
+        clock = iter(range(0, 1000, 20))
+        with patch.object(client, "_request", return_value={"issues": []}):
+            with patch("time.sleep"), patch("time.monotonic", side_effect=lambda: next(clock)):
+                self.assertFalse(client.wait_until_searchable(["VT-1"]))
 
     def test_a_branch_name_cannot_break_out_of_the_query(self):
         self.assertEqual(jql_quote('x" OR project = Y OR labels = "'), '"x\\" OR project = Y OR labels = \\""')

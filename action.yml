@@ -20,10 +20,10 @@ inputs:
     required: true
   skip-branches:
     description: >-
-      Branches that are never scanned, one glob pattern per line or separated by commas.
-      The default branch of the repository is always skipped, whatever its name.
+      Extra branches to skip. Give one glob pattern on each line, or separate the patterns with commas.
+      The action always skips the default branch, the branches of veil and pull requests from forks.
     required: false
-    default: veil/*
+    default: ""
   scanners:
     description: Scanners to run, separated by commas. The choices are trivy and semgrep.
     required: false
@@ -46,8 +46,9 @@ inputs:
     default: "true"
   auto-close:
     description: >-
-      Close the open tickets of this branch whose finding the scan no longer reports, and reopen a ticket
-      that this action closed when its finding comes back. Off when working-directory is not the repository root.
+      Close an open ticket of this branch when the scan no longer reports its finding.
+      Reopen a ticket that this action closed when its finding comes back.
+      This input has no effect when working-directory is not the repository root.
     required: false
     default: "true"
   anthropic-api-key:
@@ -81,7 +82,7 @@ outputs:
     description: Number of tickets this run reopened because their finding came back.
     value: ${{ steps.scan.outputs.tickets-reopened }}
   tickets-closed:
-    description: Number of tickets this run closed because their finding is fixed.
+    description: Number of tickets this run closed because the scan no longer reports their finding.
     value: ${{ steps.scan.outputs.tickets-closed }}
 
 runs:
@@ -93,6 +94,7 @@ runs:
       working-directory: ${{ github.action_path }}
       env:
         GOZU_HEAD_REF: ${{ github.head_ref || github.ref_name }}
+        GOZU_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         GOZU_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         GOZU_SKIP_BRANCHES: ${{ inputs.skip-branches }}
       run: python3 -m gozu_scan gate
