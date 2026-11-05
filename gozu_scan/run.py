@@ -24,6 +24,9 @@ def split_list(value: str) -> list[str]:
     return [item.strip() for item in value.replace(",", "\n").splitlines() if item.strip()]
 
 
+# The most keys that GOZU_TICKET_KEYS holds. The variable only has to be filled to tell the later steps there is work.
+MAX_TICKET_KEYS = 200
+
 # The Fix branches of veil. A scan of one would only find the work of veil again. They are always skipped.
 VEIL_BRANCH_PATTERNS = ("veil/*", "gozu/fix-*")
 
@@ -253,6 +256,8 @@ def main() -> int:
             finding.branch = head_ref
             finding.commit_sha = env.get("GOZU_HEAD_SHA", "")
         out = sync(jira, found, head_ref, opts)
+        # The new tickets first. A search can miss them for a few seconds, so they are added by name.
+        todo_keys = list(dict.fromkeys([key for key, _ in out.created] + jira.todo_ticket_keys(branch_label(head_ref))))[:MAX_TICKET_KEYS]
     except KeyError as e:
         log.error(f"The input for {e.args[0]} is empty.")
         return 1
@@ -261,10 +266,10 @@ def main() -> int:
         return 1
 
     _write("GITHUB_STEP_SUMMARY", _summary(found, out))
-    # Jira search can trail a new ticket by a few seconds. The steps after this one in the same job, such as veil,
-    # get the keys of the new tickets from this variable, so they need not wait for the search.
-    # The word `none` tells them that the scan made no new ticket, so they can skip their work.
-    keys = ",".join(key for key, _ in out.created) or "none"
+    # The steps after this one in the same job, such as veil, get the tickets to work on from this variable: the new
+    # tickets and the other To Do tickets of this branch. Jira search can trail a new ticket by a few seconds,
+    # so the new keys are listed by name. The word `none` means that nothing is left to do, so they can skip.
+    keys = ",".join(todo_keys) or "none"
     _write("GITHUB_ENV", f"GOZU_TICKET_KEYS={keys}\n")
     _write(
         "GITHUB_OUTPUT",

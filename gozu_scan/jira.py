@@ -230,6 +230,13 @@ class JiraClient:
             )
         )
 
+    def todo_ticket_keys(self, branch_label: str) -> list[str]:
+        """The keys of the tickets of this branch that are still To Do, oldest first. Done and In Progress tickets are not listed."""
+        issues = self._search(
+            f"project = {self.project_key} AND labels = {jql_quote(branch_label)} AND statusCategory = \"To Do\""
+        )
+        return [issue.key for issue in sorted(issues, key=lambda i: i.number)]
+
     def oldest_with_label(self, label: str) -> Issue | None:
         issues = list(self._search(f"project = {self.project_key} AND labels = {jql_quote(label)}"))
         return min(issues, key=lambda i: i.number) if issues else None

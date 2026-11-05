@@ -210,6 +210,10 @@ class Environment(unittest.TestCase):
         patcher = patch.dict(os.environ, self.ENV, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # No test of the run may reach a real Jira.
+        todo = patch.object(JiraClient, "todo_ticket_keys", return_value=[])
+        todo.start()
+        self.addCleanup(todo.stop)
 
 
 class Main(Environment):
@@ -233,20 +237,41 @@ class Main(Environment):
 
         write.assert_any_call("GITHUB_OUTPUT", "skip=true\n")
 
-    def test_the_keys_of_the_new_tickets_go_to_the_later_steps_of_the_job(self):
+    def test_the_variable_lists_the_new_tickets_and_the_to_do_tickets_of_the_branch(self):
         outcome = run.Outcome(created=[("VT-1", finding("a")), ("VT-2", finding("b"))])
         with patch.object(run, "collect", return_value=[]), patch.object(run, "sync", return_value=outcome):
-            with patch.object(run, "_write") as write:
-                self.assertEqual(run.main(), 0)
+            with patch.object(JiraClient, "todo_ticket_keys", return_value=["VT-2", "VT-5"]) as todo:
+                with patch.object(run, "_write") as write:
+                    self.assertEqual(run.main(), 0)
 
-        write.assert_any_call("GITHUB_ENV", "GOZU_TICKET_KEYS=VT-1,VT-2\n")
+        write.assert_any_call("GITHUB_ENV", "GOZU_TICKET_KEYS=VT-1,VT-2,VT-5\n")
+        todo.assert_called_once_with(branch_label("feature/login"))
 
-    def test_the_variable_says_none_when_the_run_made_no_ticket(self):
+    def test_older_to_do_tickets_keep_the_variable_filled_when_the_run_made_none(self):
         with patch.object(run, "collect", return_value=[]), patch.object(run, "sync", return_value=run.Outcome()):
-            with patch.object(run, "_write") as write:
-                run.main()
+            with patch.object(JiraClient, "todo_ticket_keys", return_value=["VT-7"]):
+                with patch.object(run, "_write") as write:
+                    run.main()
+
+        write.assert_any_call("GITHUB_ENV", "GOZU_TICKET_KEYS=VT-7\n")
+
+    def test_the_variable_says_none_when_nothing_is_left_to_do(self):
+        with patch.object(run, "collect", return_value=[]), patch.object(run, "sync", return_value=run.Outcome()):
+            with patch.object(JiraClient, "todo_ticket_keys", return_value=[]):
+                with patch.object(run, "_write") as write:
+                    run.main()
 
         write.assert_any_call("GITHUB_ENV", "GOZU_TICKET_KEYS=none\n")
+
+    def test_the_variable_holds_at_most_200_keys(self):
+        many = [f"VT-{n}" for n in range(1, 301)]
+        with patch.object(run, "collect", return_value=[]), patch.object(run, "sync", return_value=run.Outcome()):
+            with patch.object(JiraClient, "todo_ticket_keys", return_value=many):
+                with patch.object(run, "_write") as write:
+                    run.main()
+
+        value = next(c.args[1] for c in write.call_args_list if c.args[0] == "GITHUB_ENV")
+        self.assertEqual(len(value.strip().split("=", 1)[1].split(",")), 200)
 
     def test_a_jira_failure_fails_the_job(self):
         with patch.object(run, "collect", return_value=[]), patch.object(run, "sync", side_effect=JiraError("down")):
@@ -285,6 +310,20 @@ class JiraSearch(unittest.TestCase):
         self.assertEqual(request.call_count, 2)
         self.assertEqual(request.call_args.args[2]["nextPageToken"], "n")
         self.assertEqual((found[label].key, found[label].done), ("VT-3", True))
+
+    def test_the_to_do_tickets_of_a_branch_are_searched_by_the_branch_label(self):
+        client = JiraClient("https://jira.example.com", "e", "t", "VT")
+
+        def raw(key):
+            return {"key": key, "fields": {"labels": [], "status": {"statusCategory": {"key": "new"}}}}
+
+        with patch.object(client, "_request", return_value={"issues": [raw("VT-3"), raw("VT-1")]}) as request:
+            keys = client.todo_ticket_keys("branch-feature/login")
+
+        self.assertEqual(keys, ["VT-1", "VT-3"])
+        jql = request.call_args.args[2]["jql"]
+        self.assertIn('labels = "branch-feature/login"', jql)
+        self.assertIn('statusCategory = "To Do"', jql)
 
     def test_a_branch_name_cannot_break_out_of_the_query(self):
         self.assertEqual(jql_quote('x" OR project = Y OR labels = "'), '"x\\" OR project = Y OR labels = \\""')

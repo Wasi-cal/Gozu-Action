@@ -27,7 +27,7 @@ jobs:
           jira-project-key: GR
 ```
 
-To fix the tickets with [veil](https://github.com/Wasi-cal/veil), add a step that runs `Wasi-cal/veil@v1` after this action, in the same job. The action gives veil the keys of the tickets it just made, so veil needs no wait and no setting. When the scan makes no new ticket, veil skips its run. When you merge a Fix PR, the next run of this scan closes the tickets whose finding is gone.
+To fix the tickets with [veil](https://github.com/Wasi-cal/veil), add a step that runs `Wasi-cal/veil@v1` after this action, in the same job. The action gives veil the To Do tickets of the branch, with the ones it just made, so veil needs no wait and no setting. When no ticket of the branch is left to do, veil skips its run. When you merge a Fix PR, the next run of this scan closes the tickets whose finding is gone.
 
 ## Which branches are scanned
 
