@@ -1,0 +1,143 @@
+name: Gozu Scan to Jira
+description: Scan a pull request branch with Trivy and Semgrep and create a Jira ticket for every finding.
+author: Calfus
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  jira-url:
+    description: Base URL of the Jira Cloud site, for example https://your-team.atlassian.net.
+    required: true
+  jira-email:
+    description: Email of the Jira account that owns the API token.
+    required: true
+  jira-api-token:
+    description: Jira API token. Pass it from a repository secret.
+    required: true
+  jira-project-key:
+    description: Key of the Jira project that gets the tickets.
+    required: true
+  skip-branches:
+    description: >-
+      Branches that are never scanned, one glob pattern per line or separated by commas.
+      The default branch of the repository is always skipped, whatever its name.
+    required: false
+    default: veil/*
+  scanners:
+    description: Scanners to run, separated by commas. The choices are trivy and semgrep.
+    required: false
+    default: trivy,semgrep
+  working-directory:
+    description: Directory to scan, relative to the checkout.
+    required: false
+    default: .
+  trivy-skip-dirs:
+    description: Directories Trivy does not read, separated by commas.
+    required: false
+    default: .git,node_modules
+  semgrep-config:
+    description: Semgrep rules. `auto` uses the rules that semgrep.dev picks. A pack such as p/security-audit also works.
+    required: false
+    default: auto
+  attach-code-snippet:
+    description: Attach a PNG of the flagged code to each new ticket. A finding that may hold a secret never gets one.
+    required: false
+    default: "true"
+  auto-close:
+    description: >-
+      Close the open tickets of this branch whose finding the scan no longer reports, and reopen a ticket
+      that this action closed when its finding comes back. Off when working-directory is not the repository root.
+    required: false
+    default: "true"
+  anthropic-api-key:
+    description: Optional Anthropic API key. With it, new CRITICAL and HIGH tickets get a plain-English explanation and fix.
+    required: false
+    default: ""
+  anthropic-model:
+    description: Model for the explanations.
+    required: false
+    default: claude-opus-5-5
+  trivy-version:
+    description: Version of Trivy to install.
+    required: false
+    default: v0.76.1
+  semgrep-version:
+    description: Version of Semgrep to install.
+    required: false
+    default: 1.176.0
+
+outputs:
+  findings:
+    description: Number of findings the scanners reported.
+    value: ${{ steps.scan.outputs.findings }}
+  tickets-created:
+    description: Number of Jira tickets this run created.
+    value: ${{ steps.scan.outputs.tickets-created }}
+  tickets-existing:
+    description: Number of findings that already had a ticket.
+    value: ${{ steps.scan.outputs.tickets-existing }}
+  tickets-reopened:
+    description: Number of tickets this run reopened because their finding came back.
+    value: ${{ steps.scan.outputs.tickets-reopened }}
+  tickets-closed:
+    description: Number of tickets this run closed because their finding is fixed.
+    value: ${{ steps.scan.outputs.tickets-closed }}
+
+runs:
+  using: composite
+  steps:
+    # The branch comes in through env, never through the script text, because a branch name is user input.
+    - id: gate
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        GOZU_HEAD_REF: ${{ github.head_ref || github.ref_name }}
+        GOZU_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        GOZU_SKIP_BRANCHES: ${{ inputs.skip-branches }}
+      run: python3 -m gozu_scan gate
+
+    - if: steps.gate.outputs.skip != 'true' && contains(inputs.scanners, 'trivy')
+      uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+      with:
+        version: ${{ inputs.trivy-version }}
+        cache: true
+
+    # One venv holds every Python tool, so nothing touches the system Python and the runner needs no pipx.
+    - if: steps.gate.outputs.skip != 'true' && (contains(inputs.scanners, 'semgrep') || inputs.attach-code-snippet == 'true')
+      shell: bash
+      env:
+        SCANNERS: ${{ inputs.scanners }}
+        ATTACH: ${{ inputs.attach-code-snippet }}
+        SEMGREP_VERSION: ${{ inputs.semgrep-version }}
+      run: |
+        packages=()
+        [[ "$SCANNERS" == *semgrep* ]] && packages+=("semgrep==${SEMGREP_VERSION}")
+        [[ "$ATTACH" == "true" ]] && packages+=("pillow==12.3.0" "pygments==2.21.0")
+        python3 -m venv "$RUNNER_TEMP/gozu-venv"
+        "$RUNNER_TEMP/gozu-venv/bin/pip" install --quiet --disable-pip-version-check "${packages[@]}"
+        echo "$RUNNER_TEMP/gozu-venv/bin" >> "$GITHUB_PATH"
+
+    - id: scan
+      if: steps.gate.outputs.skip != 'true'
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        GOZU_HEAD_REF: ${{ github.head_ref || github.ref_name }}
+        GOZU_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        GOZU_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        GOZU_SKIP_BRANCHES: ${{ inputs.skip-branches }}
+        GOZU_SCANNERS: ${{ inputs.scanners }}
+        GOZU_FULL_SCAN: ${{ inputs.working-directory == '.' }}
+        GOZU_ATTACH_SNIPPET: ${{ inputs.attach-code-snippet }}
+        GOZU_AUTO_CLOSE: ${{ inputs.auto-close }}
+        GOZU_ANTHROPIC_KEY: ${{ inputs.anthropic-api-key }}
+        GOZU_ANTHROPIC_MODEL: ${{ inputs.anthropic-model }}
+        GOZU_WORKDIR: ${{ github.workspace }}/${{ inputs.working-directory }}
+        GOZU_TRIVY_SKIP_DIRS: ${{ inputs.trivy-skip-dirs }}
+        GOZU_SEMGREP_CONFIG: ${{ inputs.semgrep-config }}
+        GOZU_JIRA_URL: ${{ inputs.jira-url }}
+        GOZU_JIRA_EMAIL: ${{ inputs.jira-email }}
+        GOZU_JIRA_TOKEN: ${{ inputs.jira-api-token }}
+        GOZU_JIRA_PROJECT: ${{ inputs.jira-project-key }}
+      run: python3 -m gozu_scan
