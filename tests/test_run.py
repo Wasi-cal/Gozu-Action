@@ -241,12 +241,12 @@ class Main(Environment):
 
         write.assert_any_call("GITHUB_ENV", "GOZU_TICKET_KEYS=VT-1,VT-2\n")
 
-    def test_no_variable_is_set_when_the_run_made_no_ticket(self):
+    def test_the_variable_says_none_when_the_run_made_no_ticket(self):
         with patch.object(run, "collect", return_value=[]), patch.object(run, "sync", return_value=run.Outcome()):
             with patch.object(run, "_write") as write:
                 run.main()
 
-        self.assertNotIn("GITHUB_ENV", [call.args[0] for call in write.call_args_list])
+        write.assert_any_call("GITHUB_ENV", "GOZU_TICKET_KEYS=none\n")
 
     def test_a_jira_failure_fails_the_job(self):
         with patch.object(run, "collect", return_value=[]), patch.object(run, "sync", side_effect=JiraError("down")):

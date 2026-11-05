@@ -263,8 +263,9 @@ def main() -> int:
     _write("GITHUB_STEP_SUMMARY", _summary(found, out))
     # Jira search can trail a new ticket by a few seconds. The steps after this one in the same job, such as veil,
     # get the keys of the new tickets from this variable, so they need not wait for the search.
-    if out.created:
-        _write("GITHUB_ENV", f"GOZU_TICKET_KEYS={','.join(key for key, _ in out.created)}\n")
+    # The word `none` tells them that the scan made no new ticket, so they can skip their work.
+    keys = ",".join(key for key, _ in out.created) or "none"
+    _write("GITHUB_ENV", f"GOZU_TICKET_KEYS={keys}\n")
     _write(
         "GITHUB_OUTPUT",
         f"findings={len(found)}\ntickets-created={len(out.created)}\ntickets-existing={out.existing}\n"
