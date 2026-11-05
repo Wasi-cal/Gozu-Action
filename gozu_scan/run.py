@@ -253,9 +253,6 @@ def main() -> int:
             finding.branch = head_ref
             finding.commit_sha = env.get("GOZU_HEAD_SHA", "")
         out = sync(jira, found, head_ref, opts)
-        # Jira search can lag a few seconds behind a new ticket. A tool that reads the tickets next, such as veil, must find them.
-        if out.created:
-            jira.wait_until_searchable([key for key, _ in out.created])
     except KeyError as e:
         log.error(f"The input for {e.args[0]} is empty.")
         return 1
@@ -264,6 +261,10 @@ def main() -> int:
         return 1
 
     _write("GITHUB_STEP_SUMMARY", _summary(found, out))
+    # Jira search can trail a new ticket by a few seconds. The steps after this one in the same job, such as veil,
+    # get the keys of the new tickets from this variable, so they need not wait for the search.
+    if out.created:
+        _write("GITHUB_ENV", f"GOZU_TICKET_KEYS={','.join(key for key, _ in out.created)}\n")
     _write(
         "GITHUB_OUTPUT",
         f"findings={len(found)}\ntickets-created={len(out.created)}\ntickets-existing={out.existing}\n"

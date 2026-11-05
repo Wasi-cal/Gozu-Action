@@ -233,20 +233,20 @@ class Main(Environment):
 
         write.assert_any_call("GITHUB_OUTPUT", "skip=true\n")
 
-    def test_the_run_waits_until_the_new_tickets_can_be_found_by_search(self):
+    def test_the_keys_of_the_new_tickets_go_to_the_later_steps_of_the_job(self):
         outcome = run.Outcome(created=[("VT-1", finding("a")), ("VT-2", finding("b"))])
         with patch.object(run, "collect", return_value=[]), patch.object(run, "sync", return_value=outcome):
-            with patch.object(JiraClient, "wait_until_searchable") as wait:
+            with patch.object(run, "_write") as write:
                 self.assertEqual(run.main(), 0)
 
-        wait.assert_called_once_with(["VT-1", "VT-2"])
+        write.assert_any_call("GITHUB_ENV", "GOZU_TICKET_KEYS=VT-1,VT-2\n")
 
-    def test_the_run_does_not_wait_when_it_made_no_ticket(self):
+    def test_no_variable_is_set_when_the_run_made_no_ticket(self):
         with patch.object(run, "collect", return_value=[]), patch.object(run, "sync", return_value=run.Outcome()):
-            with patch.object(JiraClient, "wait_until_searchable") as wait:
+            with patch.object(run, "_write") as write:
                 run.main()
 
-        wait.assert_not_called()
+        self.assertNotIn("GITHUB_ENV", [call.args[0] for call in write.call_args_list])
 
     def test_a_jira_failure_fails_the_job(self):
         with patch.object(run, "collect", return_value=[]), patch.object(run, "sync", side_effect=JiraError("down")):
@@ -285,26 +285,6 @@ class JiraSearch(unittest.TestCase):
         self.assertEqual(request.call_count, 2)
         self.assertEqual(request.call_args.args[2]["nextPageToken"], "n")
         self.assertEqual((found[label].key, found[label].done), ("VT-3", True))
-
-    def test_the_wait_ends_when_search_shows_every_new_ticket(self):
-        client = JiraClient("https://jira.example.com", "e", "t", "VT")
-
-        def raw(key):
-            return {"key": key, "fields": {"labels": [], "status": {"statusCategory": {"key": "new"}}}}
-
-        replies = [{"issues": []}, {"issues": [raw("VT-1")]}, {"issues": [raw("VT-1"), raw("VT-2")]}]
-        with patch.object(client, "_request", side_effect=replies) as request, patch("time.sleep") as sleep:
-            self.assertTrue(client.wait_until_searchable(["VT-1", "VT-2"]))
-
-        self.assertEqual((request.call_count, sleep.call_count), (3, 2))
-        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1.0, 2.0])
-
-    def test_the_wait_gives_up_after_the_limit_and_does_not_fail(self):
-        client = JiraClient("https://jira.example.com", "e", "t", "VT")
-        clock = iter(range(0, 1000, 20))
-        with patch.object(client, "_request", return_value={"issues": []}):
-            with patch("time.sleep"), patch("time.monotonic", side_effect=lambda: next(clock)):
-                self.assertFalse(client.wait_until_searchable(["VT-1"]))
 
     def test_a_branch_name_cannot_break_out_of_the_query(self):
         self.assertEqual(jql_quote('x" OR project = Y OR labels = "'), '"x\\" OR project = Y OR labels = \\""')

@@ -230,26 +230,6 @@ class JiraClient:
             )
         )
 
-    def wait_until_searchable(self, keys: list[str], timeout: float = 60.0, interval: float = 1.0) -> bool:
-        """Wait until a search finds every ticket in `keys`. Return False after `timeout` seconds. Never raise on a late index.
-
-        The first check is at once. The gap between checks doubles from `interval` up to 5 seconds, so a normal lag costs one or two searches.
-        """
-        deadline = time.monotonic() + timeout
-        pending = set(keys)
-        while pending:
-            for start in range(0, len(keys), _SEARCH_CHUNK):
-                quoted = ", ".join(jql_quote(k) for k in keys[start : start + _SEARCH_CHUNK])
-                pending -= {issue.key for issue in self._search(f"key in ({quoted})")}
-            if not pending:
-                return True
-            if time.monotonic() >= deadline:
-                log.warning(f"Jira search does not show {len(pending)} new ticket(s) yet. Later steps may not find them.")
-                return False
-            time.sleep(interval)
-            interval = min(interval * 2, 5.0)
-        return True
-
     def oldest_with_label(self, label: str) -> Issue | None:
         issues = list(self._search(f"project = {self.project_key} AND labels = {jql_quote(label)}"))
         return min(issues, key=lambda i: i.number) if issues else None
