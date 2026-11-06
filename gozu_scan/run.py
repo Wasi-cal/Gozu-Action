@@ -291,7 +291,7 @@ def main() -> int:
         jira = JiraClient(env["GOZU_JIRA_URL"], env["GOZU_JIRA_EMAIL"], env["GOZU_JIRA_TOKEN"], env["GOZU_JIRA_PROJECT"])
         reports = {
             name: path
-            for name, path in (("trivy", env.get("GOZU_TRIVY_REPORT", "").strip()), ("semgrep", env.get("GOZU_SEMGREP_REPORT", "").strip()))
+            for name, path in (("trivy", _report_path("GOZU_TRIVY_REPORT")), ("semgrep", _report_path("GOZU_SEMGREP_REPORT")))
             if path
         }
         found = collect(opts.scanners, opts.workdir, env.get("GOZU_TRIVY_SKIP_DIRS", ""), env.get("GOZU_SEMGREP_CONFIG", "auto"), reports)

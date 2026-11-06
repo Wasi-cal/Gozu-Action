@@ -282,6 +282,15 @@ class Main(Environment):
 
         self.assertEqual((found[0].repo_full_name, found[0].branch), ("acme/app", "feature/login"))
 
+    def test_a_report_path_is_resolved_against_the_checkout(self):
+        # The step runs in the action folder, so a path relative to the checkout would not be found there.
+        env = {"GITHUB_WORKSPACE": "/work/app", "GOZU_TRIVY_REPORT": "reports/t.json", "GOZU_SEMGREP_REPORT": ""}
+        with patch.dict(os.environ, env), patch.object(run, "collect", return_value=[]) as collect, patch.object(run, "sync") as sync:
+            sync.return_value = run.Outcome()
+            self.assertEqual(run.main(), 0)
+
+        self.assertEqual(collect.call_args.args[-1], {"trivy": "/work/app/reports/t.json"})
+
     def test_a_skipped_branch_needs_no_credentials(self):
         with patch.dict(os.environ, {"GOZU_HEAD_REF": "veil/gr-7", "GOZU_SKIP_BRANCHES": "veil/*", "GOZU_JIRA_TOKEN": ""}):
             with patch.object(run, "collect", side_effect=AssertionError("No scan may run.")):
