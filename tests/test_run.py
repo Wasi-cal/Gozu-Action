@@ -1,4 +1,7 @@
 import os
+import pathlib
+import shutil
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -205,6 +208,47 @@ class AutoClose(unittest.TestCase):
         jira.transition = lambda key, category: False
 
         self.assertEqual(run.sync(jira, [], "feature/login", self.OPTS).closed, [])
+
+
+class Reports(unittest.TestCase):
+    SEMGREP = '{"results": [{"check_id": "r.one", "path": "app.py", "start": {"line": 3}, "extra": {"severity": "ERROR", "message": "m"}}]}'
+    TRIVY = '{"Results": [{"Target": "uv.lock", "Vulnerabilities": [{"VulnerabilityID": "CVE-1", "PkgName": "pkg", "Severity": "HIGH"}]}]}'
+
+    def write(self, name: str, text: str) -> str:
+        directory = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        (directory / name).write_text(text)
+        return str(directory / name)
+
+    def test_a_scanner_with_a_report_is_read_from_the_file_and_never_run(self):
+        reports = {"semgrep": self.write("s.json", self.SEMGREP), "trivy": self.write("t.json", self.TRIVY)}
+        with patch.object(run.semgrep, "scan", side_effect=AssertionError("No scan may run.")), patch.object(
+            run.trivy, "scan", side_effect=AssertionError("No scan may run.")
+        ):
+            found = run.collect(["trivy", "semgrep"], ".", "", "auto", reports)
+
+        self.assertEqual(sorted(f.source_tool for f in found), ["semgrep", "trivy"])
+
+    def test_a_scanner_without_a_report_still_runs(self):
+        reports = {"semgrep": self.write("s.json", self.SEMGREP)}
+        with patch.object(run.trivy, "scan", return_value=[finding("t")]) as scan:
+            found = run.collect(["trivy", "semgrep"], ".", "", "auto", reports)
+
+        scan.assert_called_once()
+        self.assertEqual(len(found), 2)
+
+    def test_a_missing_report_fails_the_run_instead_of_closing_every_ticket(self):
+        with self.assertRaises(run.ScanError):
+            run.collect(["semgrep"], ".", "", "auto", {"semgrep": "/no/such/report.json"})
+
+    def test_a_report_that_cannot_be_read_fails_the_run(self):
+        with self.assertRaises(run.ScanError):
+            run.collect(["semgrep"], ".", "", "auto", {"semgrep": self.write("s.json", "not json")})
+
+    def test_a_report_of_a_scanner_that_is_not_chosen_is_ignored(self):
+        found = run.collect(["semgrep"], ".", "", "auto", {"semgrep": self.write("s.json", self.SEMGREP), "trivy": "/no/such"})
+
+        self.assertEqual([f.source_tool for f in found], ["semgrep"])
 
 
 class Environment(unittest.TestCase):

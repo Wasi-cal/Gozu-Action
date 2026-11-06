@@ -28,6 +28,18 @@ inputs:
     description: Scanners to run, separated by commas. The choices are trivy and semgrep.
     required: false
     default: trivy,semgrep
+  trivy-report:
+    description: >-
+      Path to a Trivy JSON report, relative to the checkout. Gozu reads this report and does not run Trivy.
+      Leave it empty to run Trivy.
+    required: false
+    default: ""
+  semgrep-report:
+    description: >-
+      Path to a Semgrep JSON report, relative to the checkout. Gozu reads this report and does not run Semgrep.
+      Leave it empty to run Semgrep.
+    required: false
+    default: ""
   working-directory:
     description: Directory to scan, relative to the checkout.
     required: false
@@ -99,7 +111,7 @@ runs:
         GOZU_SKIP_BRANCHES: ${{ inputs.skip-branches }}
       run: python3 -m gozu_scan gate
 
-    - if: steps.gate.outputs.skip != 'true' && contains(inputs.scanners, 'trivy')
+    - if: steps.gate.outputs.skip != 'true' && contains(inputs.scanners, 'trivy') && inputs.trivy-report == ''
       uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
       with:
         version: ${{ inputs.trivy-version }}
@@ -107,12 +119,12 @@ runs:
 
     # Cache the vulnerability database of Trivy for one day. Trivy updates a stale database by itself.
     - id: trivy-day
-      if: steps.gate.outputs.skip != 'true' && contains(inputs.scanners, 'trivy')
+      if: steps.gate.outputs.skip != 'true' && contains(inputs.scanners, 'trivy') && inputs.trivy-report == ''
       shell: bash
       run: |
         echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
         echo "TRIVY_CACHE_DIR=$RUNNER_TEMP/trivy-cache" >> "$GITHUB_ENV"
-    - if: steps.gate.outputs.skip != 'true' && contains(inputs.scanners, 'trivy')
+    - if: steps.gate.outputs.skip != 'true' && contains(inputs.scanners, 'trivy') && inputs.trivy-report == ''
       uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
       with:
         path: ${{ runner.temp }}/trivy-cache
@@ -122,12 +134,13 @@ runs:
     # One venv holds every Python tool, so nothing touches the system Python and the runner needs no pipx.
     # The venv is cached. The key holds the packages, the operating system, the architecture and the Python version.
     - id: tools
-      if: steps.gate.outputs.skip != 'true' && (contains(inputs.scanners, 'semgrep') || inputs.attach-code-snippet == 'true')
+      if: steps.gate.outputs.skip != 'true' && ((contains(inputs.scanners, 'semgrep') && inputs.semgrep-report == '') || inputs.attach-code-snippet == 'true')
       shell: bash
       env:
         SCANNERS: ${{ inputs.scanners }}
         ATTACH: ${{ inputs.attach-code-snippet }}
         SEMGREP_VERSION: ${{ inputs.semgrep-version }}
+        SEMGREP_REPORT: ${{ inputs.semgrep-report }}
       run: |
         if [[ ! "$SEMGREP_VERSION" =~ ^[0-9A-Za-z.+!-]+$ ]]; then
           echo "::error::The input semgrep-version is not a version."
@@ -135,7 +148,7 @@ runs:
         fi
         requirements="$RUNNER_TEMP/gozu-requirements.txt"
         : > "$requirements"
-        [[ "$SCANNERS" == *semgrep* ]] && echo "semgrep==${SEMGREP_VERSION}" >> "$requirements"
+        [[ "$SCANNERS" == *semgrep* && -z "$SEMGREP_REPORT" ]] && echo "semgrep==${SEMGREP_VERSION}" >> "$requirements"
         [[ "$ATTACH" == "true" ]] && printf '%s\n' "pillow==12.3.0" "pygments==2.21.0" >> "$requirements"
         key="$(python3 - "$requirements" "$RUNNER_OS" "$RUNNER_ARCH" <<'PY'
         import hashlib, pathlib, platform, sys
@@ -177,6 +190,8 @@ runs:
         GOZU_WORKDIR: ${{ github.workspace }}/${{ inputs.working-directory }}
         GOZU_TRIVY_SKIP_DIRS: ${{ inputs.trivy-skip-dirs }}
         GOZU_SEMGREP_CONFIG: ${{ inputs.semgrep-config }}
+        GOZU_TRIVY_REPORT: ${{ inputs.trivy-report }}
+        GOZU_SEMGREP_REPORT: ${{ inputs.semgrep-report }}
         GOZU_JIRA_URL: ${{ inputs.jira-url }}
         GOZU_JIRA_EMAIL: ${{ inputs.jira-email }}
         GOZU_JIRA_TOKEN: ${{ inputs.jira-api-token }}

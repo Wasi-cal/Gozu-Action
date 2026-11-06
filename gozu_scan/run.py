@@ -49,11 +49,29 @@ def skip_reason(
     return None
 
 
-def collect(scanners: list[str], workdir: str, trivy_skip_dirs: str, semgrep_config: str) -> list[Finding]:
-    """Runs the chosen scanners at the same time and joins their findings."""
+def _read_report(parse, path: str) -> list[Finding]:
+    """A report that cannot be read is an error. Treating it as "no findings" would close every open ticket."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return parse(f.read())
+    except OSError as e:
+        raise ScanError(f"The report {path} cannot be read: {e.strerror or e}.") from e
+
+
+def collect(
+    scanners: list[str],
+    workdir: str,
+    trivy_skip_dirs: str,
+    semgrep_config: str,
+    reports: dict[str, str] | None = None,
+) -> list[Finding]:
+    """Joins the findings of the chosen scanners. A scanner with a report is read from it, the others run at the same time."""
+    reports = reports or {}
     jobs = {
-        "trivy": lambda: trivy.scan(workdir, trivy_skip_dirs),
-        "semgrep": lambda: semgrep.scan(workdir, semgrep_config),
+        "trivy": lambda: _read_report(trivy.parse, reports["trivy"]) if "trivy" in reports else trivy.scan(workdir, trivy_skip_dirs),
+        "semgrep": lambda: (
+            _read_report(semgrep.parse, reports["semgrep"]) if "semgrep" in reports else semgrep.scan(workdir, semgrep_config)
+        ),
     }
     unknown = [name for name in scanners if name not in jobs]
     if unknown:
@@ -242,6 +260,12 @@ def _flag(name: str, default: str = "true") -> bool:
     return os.environ.get(name, default).strip().lower() == "true"
 
 
+def _report_path(name: str) -> str:
+    """The input is relative to the checkout. The step runs in the action folder, so the path is made absolute."""
+    path = os.environ.get(name, "").strip()
+    return os.path.join(os.environ.get("GITHUB_WORKSPACE", ""), path) if path else ""
+
+
 def main() -> int:
     env = os.environ
     head_ref = env.get("GOZU_HEAD_REF", "").strip()
@@ -265,7 +289,12 @@ def main() -> int:
 
     try:
         jira = JiraClient(env["GOZU_JIRA_URL"], env["GOZU_JIRA_EMAIL"], env["GOZU_JIRA_TOKEN"], env["GOZU_JIRA_PROJECT"])
-        found = collect(opts.scanners, opts.workdir, env.get("GOZU_TRIVY_SKIP_DIRS", ""), env.get("GOZU_SEMGREP_CONFIG", "auto"))
+        reports = {
+            name: path
+            for name, path in (("trivy", env.get("GOZU_TRIVY_REPORT", "").strip()), ("semgrep", env.get("GOZU_SEMGREP_REPORT", "").strip()))
+            if path
+        }
+        found = collect(opts.scanners, opts.workdir, env.get("GOZU_TRIVY_SKIP_DIRS", ""), env.get("GOZU_SEMGREP_CONFIG", "auto"), reports)
         for finding in found:
             finding.repo_full_name = repo
             finding.branch = head_ref

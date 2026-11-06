@@ -45,6 +45,7 @@ The action skips a run, before it installs anything, when:
 | `jira-url`, `jira-email`, `jira-api-token`, `jira-project-key` | required | Jira Cloud connection. Pass the token from a secret. |
 | `skip-branches` | empty | Extra glob patterns to skip, one per line or comma separated. |
 | `scanners` | `trivy,semgrep` | Which scanners run. |
+| `trivy-report`, `semgrep-report` | empty | Path to a Trivy or Semgrep JSON report, relative to the checkout. Gozu reads the report and does not run that scanner. A report that is missing or unreadable fails the run. See "Use reports from an earlier job". |
 | `working-directory` | `.` | Directory to scan, relative to the checkout. |
 | `trivy-skip-dirs` | `.git,node_modules` | Directories Trivy does not read. |
 | `semgrep-config` | `auto` | Semgrep rules. `auto` sends metrics to semgrep.dev. Use `p/security-audit` for a fixed pack. |
@@ -55,6 +56,23 @@ The action skips a run, before it installs anything, when:
 | `trivy-version`, `semgrep-version` | pinned | Tool versions to install. |
 
 Outputs: `findings`, `tickets-created`, `tickets-existing`, `tickets-reopened`, `tickets-closed`.
+
+## Use reports from an earlier job
+
+A pipeline can already run Trivy and Semgrep and upload their JSON reports. Download them in a job that comes after the scan jobs, then give Gozu the paths. Gozu then runs no scanner for which it has a report, and a scanner without a report still runs.
+
+```yaml
+- uses: actions/download-artifact@<sha>
+  with:
+    name: semgrep-report
+    path: reports
+- uses: Wasi-cal/Gozu-Action@v1
+  with:
+    semgrep-report: reports/semgrep-report.json
+    # ...the Jira inputs
+```
+
+Use `format: json` for Trivy. A table report cannot be read. A scanner must also be in `scanners` for Gozu to read its report. Auto-close compares the report with the open tickets, so a report that covers less than a full scan closes the tickets of the findings it leaves out.
 
 ## What it does
 
